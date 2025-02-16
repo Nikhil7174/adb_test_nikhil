@@ -6,6 +6,9 @@ services:
     command: bash -c "cd /src/rest && python manage.py runserver 0.0.0.0:8000"
     ports:
       - "8000:8000"
+    environment:
+      - MONGO_HOST=mongo
+      - MONGO_PORT=27017
     links:
       - mongo
     volumes:
@@ -13,13 +16,16 @@ services:
       - ${ADBREW_CODEBASE_PATH}:/src
 
   app:
-    build: .
+    build: ./src/app
     container_name: app
-    command: bash -c "cd /src/app && yarn install && yarn start"
+    environment:
+      - WDS_SOCKET_HOST=127.0.0.1 
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
     ports:
       - "3000:3000"
     volumes:
-      - ${ADBREW_CODEBASE_PATH}:/src
+      - /src/app/node_modules
 
   mongo:
     build: .
