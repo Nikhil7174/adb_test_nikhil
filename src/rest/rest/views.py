@@ -1,69 +1,58 @@
-from django.shortcuts import render
+"""
+Centralized Error Handling:
+
+Use a decorator to handle database exceptions and reduce code duplication.
+
+Dependency Injection:
+
+Inject the repository dependency into the view to decouple it from specific implementations.
+"""
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-import json, logging, os
+from django.conf import settings
 from pymongo import MongoClient
-from bson import ObjectId
-from pymongo.errors import PyMongoError
+from .todo_repositories import MongoTodoRepository, DatabaseError
+from .serializers import TodoSerializer
+import functools
+import logging
 
-MONGO_HOST = os.environ.get("MONGO_HOST", "mongo")
-MONGO_PORT = os.environ.get("MONGO_PORT", 27017)
-
-mongo_uri = f"mongodb://{MONGO_HOST}:{MONGO_PORT}/"
-db = MongoClient(mongo_uri)['test_db']
 logger = logging.getLogger(__name__)
 
-class TodoListView(APIView):
-    def get(self, request):
-        """
-        Fetch all TODOs from MongoDB.
-        Returns: List of TODOs with id and description.
-        """
+def handle_db_errors(view_method):
+    @functools.wraps(view_method)
+    def wrapper(self, request, *args, **kwargs):
         try:
-            todos = list(db.todos.find({}))
-            
-            # Convert MongoDB ObjectId to string for JSON serialization
-            formatted_todos = [
-                {"id": str(todo["_id"]), "description": todo["description"]}
-                for todo in todos
-            ]
-            
-            return Response({"todos": formatted_todos}, status=status.HTTP_200_OK)
-            
-        except PyMongoError as e:
-            logger.error(f"MongoDB query failed: {str(e)}")
+            return view_method(self, request, *args, **kwargs)
+        except DatabaseError:
+            logger.error("Database operation failed")
             return Response(
-                {"error": "Failed to fetch TODOs"}, 
+                {"error": "Internal server error"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    return wrapper
 
+class TodoListView(APIView):
+    def __init__(self):
+        client = MongoClient(self._get_mongo_uri())
+        self.repository = MongoTodoRepository(
+            client=client,
+            database_name=settings.MONGO_CONFIG['DATABASE'],
+            collection_name=settings.MONGO_CONFIG['COLLECTION']
+        )
+
+    def _get_mongo_uri(self):
+        config = settings.MONGO_CONFIG
+        return f"mongodb://{config['HOST']}:{config['PORT']}/"
+
+    @handle_db_errors
+    def get(self, request):
+        todos = self.repository.get_all_todos()
+        return Response({"todos": todos}, status=status.HTTP_200_OK)
+
+    @handle_db_errors
     def post(self, request):
-        """
-        Create a new TODO in MongoDB.
-        Expects: { "description": "string" }
-        Returns: Created TODO with ID.
-        """
-        try:
-            description = request.data.get("description")
-            
-            # Input validation
-            if not description or not description.strip():
-                return Response(
-                    {"error": "Description cannot be empty"}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-                
-            result = db.todos.insert_one({"description": description.strip()})
-            
-            return Response(
-                {"id": str(result.inserted_id), "description": description},
-                status=status.HTTP_201_CREATED
-            )
-            
-        except PyMongoError as e:
-            logger.error(f"MongoDB insert failed: {str(e)}")
-            return Response(
-                {"error": "Failed to create TODO"}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        serializer = TodoSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        todo = self.repository.create_todo(serializer.validated_data['description'])
+        return Response(todo, status=status.HTTP_201_CREATED)

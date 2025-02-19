@@ -134,3 +134,11 @@ REST_FRAMEWORK = {
 CORS_ORIGIN_ALLOW_ALL = True # If this is used then `CORS_ORIGIN_WHITELIST` will not have any effect
 CORS_ALLOW_CREDENTIALS = True
 
+#Centralize MongoDB configuration in Django settings.
+
+MONGO_CONFIG = {
+    'HOST': os.environ.get("MONGO_HOST", "mongo"),
+    'PORT': int(os.environ.get("MONGO_PORT", 27017)),
+    'DATABASE': 'test_db',
+    'COLLECTION': 'todos',
+}
